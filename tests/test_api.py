@@ -38,10 +38,16 @@ def test_auth_before_parsing(client, headers, engine):
     assert engine.calls == []
 
 
-@pytest.mark.parametrize("language", ["ha", "ig", "en", "Yoruba", "../../model", ""])
+@pytest.mark.parametrize("language", ["en", "Yoruba", "../../model", ""])
 def test_unsupported_language(client, headers, language, engine):
     assert upload(client, headers, language).status_code == 422
-    assert engine.calls == []
+
+
+@pytest.mark.parametrize("language", ["yo", "en-NG", "ha", "ig"])
+def test_four_official_languages_are_enabled(client, headers, language, engine):
+    assert upload(client, headers, language).status_code == 200
+    assert engine.calls[0][0] == language
+    assert client.get("/health").json()["loaded_languages"] == [language]
 
 
 @pytest.mark.parametrize("data,mime,status", [(b"", "audio/wav", 400), (b"not audio", "audio/wav", 415),

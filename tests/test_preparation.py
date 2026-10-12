@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.artifact import MODEL_FILE, MANIFEST_FILE, COMMIT_FILE, MODEL_ID, SOURCE_REVISION, LLAMA_CPP_REVISION, sha256
 from app.main import create_app
-from app.preparation import RenderChatEngine, check_smoke_report
+from app.preparation import RenderChatEngine
 from scripts.convert_model import reuse_prepared, prepare, atomic_json, check_resources, PreparationError
 
 
@@ -48,38 +48,16 @@ def test_incomplete_and_corrupt_artifacts_are_never_reused(tmp_path):
     assert reuse_prepared(output) is False
 
 
-def test_model_ready_requires_successful_matching_smoke_report(tmp_path):
-    digest = committed(tmp_path)
-    report = tmp_path / "smoke-report.jsonl"
-    with pytest.raises(FileNotFoundError):
-        check_smoke_report(tmp_path)
-    report.write_text(json.dumps({"inference_passed": True, "model": MODEL_ID,
-                                  "artifact_sha256": "0" * 64}) + "\n")
-    with pytest.raises(ValueError):
-        check_smoke_report(tmp_path)
-    report.write_text(json.dumps({"inference_passed": True, "model": MODEL_ID,
-                                  "artifact_sha256": digest}) + "\n")
-    check_smoke_report(tmp_path)
-
-
 @pytest.mark.asyncio
-async def test_serve_never_prepares_missing_model(settings):
+async def test_render_engine_loads_the_prepared_artifact_through_normal_startup(settings, monkeypatch):
     settings.natlas_setup_mode = "serve"
-    settings.natlas_artifact_dir = Path(settings.hf_home)
+    settings.natlas_enabled = True
+    loaded = []
     engine = RenderChatEngine(settings)
-    engine.run_job = AsyncMock(side_effect=AssertionError("Must not prepare in serve mode"))
+    monkeypatch.setattr(engine, "_load", lambda: loaded.append(True))
     await engine.start()
-    assert engine.state == "unavailable"
-    engine.run_job.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_failed_preparation_never_becomes_ready(settings):
-    settings.natlas_setup_mode = "prepare"
-    engine = RenderChatEngine(settings)
-    engine.run_job = AsyncMock(side_effect=RuntimeError("private error must not be logged"))
-    await engine.start()
-    assert engine.state == "preparation_failed"
+    assert engine.state == "ready"
+    assert loaded == [True]
 
 
 def test_preparation_liveness_is_separate_from_model_readiness(settings, headers):
@@ -96,34 +74,6 @@ def test_preparation_liveness_is_separate_from_model_readiness(settings, headers
         request = {"language": "en", "messages": [{"role": "user", "content": "Hello"}]}
         assert client.post("/chat", headers=headers, json=request).status_code == 503
         assert client.post("/transcribe", headers={**headers, "Content-Type": "multipart/form-data"}).status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_successful_job_requires_conversion_then_smoke_and_stays_unavailable_for_chat(settings, tmp_path):
-    from app.chat import ChatRequest
-    from app.errors import ServiceError
-    settings.natlas_setup_mode = "prepare"
-    settings.natlas_managed_artifact = True
-    settings.natlas_artifact_dir = tmp_path / "model"
-    engine = RenderChatEngine(settings)
-    calls = []
-
-    async def job(script, *args, stdout=None):
-        calls.append(script)
-        if script == "convert_model.py":
-            committed(settings.natlas_artifact_dir)
-        else:
-            result = {"inference_passed": True, "model": MODEL_ID,
-                      "artifact_sha256": settings.natlas_manifest_sha256}
-            stdout.write((json.dumps(result) + "\n").encode())
-
-    engine.run_job = job  # Unit-test double only; never used by runtime.
-    await engine.start()
-    assert calls == ["convert_model.py", "smoke_cpu.py"]
-    assert engine.state == "prepared"
-    with pytest.raises(ServiceError) as failure:
-        await engine.generate(ChatRequest(language="en", messages=[{"role": "user", "content": "Hello"}]))
-    assert failure.value.status == 503
 
 
 def test_resource_checks_reject_small_conversion_disk_and_ram(tmp_path, monkeypatch):

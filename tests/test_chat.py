@@ -152,7 +152,7 @@ def test_transformers_loading_and_generation_contract(settings, monkeypatch):
     assert result == tokenizer.decode.return_value
     tokenizer.decode.assert_called_once_with([20, 21], skip_special_tokens=True)
     assert 'Yoruba' in tokenizer.apply_chat_template.call_args.args[0][0]['content']
-    assert model.generate.call_args.kwargs['max_new_tokens'] == 512
+    assert model.generate.call_args.kwargs['max_new_tokens'] == 128
     assert set(model.generate.call_args.kwargs['eos_token_id']) == {1, 2}
     settings.natlas_max_input_tokens = 2
     with pytest.raises(ServiceError) as failure:

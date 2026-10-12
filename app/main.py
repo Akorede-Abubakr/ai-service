@@ -241,11 +241,9 @@ def create_app(settings=None, engine=None, decoder=decode_audio, chat_engine=Non
 
 
 def create_render_app():
-    if Settings().natlas_backend == "remote":
-        return create_remote_app()
     from .preparation import RenderChatEngine
     settings = Settings(natlas_backend="gguf", natlas_enabled=True,
-                        natlas_managed_artifact=True, hf_local_files_only=True)
+                        natlas_managed_artifact=False)
     return create_app(settings=settings, chat_engine=RenderChatEngine(settings), render_only=True)
 
 

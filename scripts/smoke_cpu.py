@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.artifact import MODEL_ID, COMMIT_FILE
+from app.artifact import MODEL_ID, COMMIT_FILE, MANIFEST_FILE, sha256
 from app.chat import ChatEngine, ChatRequest
 from app.config import Settings
 
@@ -20,6 +20,15 @@ PROMPTS = {
     "ha": "A cikin gajeriyar jimla ɗaya, bayyana amfanin karatu.",
     "ig": "N'otu ahịrịokwu dị mkpirikpi, kọwaa uru ịgụ akwụkwọ bara.",
 }
+
+
+def atomic_json(path, data):
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+        handle.flush()
+    temporary.replace(path)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -91,6 +100,15 @@ async def run(args):
             # These are fixed, nonprivate test prompts. Print actual text for human review.
             print(json.dumps({"language": language, "reply": reply,
                               "seconds": round(time.monotonic() - started, 2)}, ensure_ascii=True))
+        if engine:
+            manifest_path = settings.natlas_artifact_dir / MANIFEST_FILE
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["generation_verified"] = True
+            manifest["smoke_languages"] = sorted(PROMPTS)
+            atomic_json(manifest_path, manifest)
+            settings.natlas_manifest_sha256 = sha256(manifest_path)
+            atomic_json(settings.natlas_artifact_dir / COMMIT_FILE,
+                        {"manifest_sha256": settings.natlas_manifest_sha256})
         print(json.dumps({"inference_passed": True, "model": MODEL_ID,
                           "artifact_sha256": settings.natlas_manifest_sha256,
                           "language_quality": "requires human review of the generated replies"}))

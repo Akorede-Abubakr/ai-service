@@ -5,16 +5,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements*.txt ./
-# Default is CPU. For GPU, build with a PyTorch CUDA wheel index supported by
-# your host driver, e.g. --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
-ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir torch==2.9.1 --index-url ${TORCH_INDEX_URL} \
+RUN pip install --no-cache-dir torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir -r requirements.txt
 RUN useradd --create-home --uid 10001 asr && mkdir -p /data/huggingface \
     && chown -R asr:asr /data /app
 COPY --chown=asr:asr app ./app
-USER asr
-EXPOSE 8000
+EXPOSE 10000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
-CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT','8000') + '/health', timeout=3)"
+COPY --chown=asr:asr scripts/serve_speech.py ./scripts/serve_speech.py
+CMD ["python", "scripts/serve_speech.py"]

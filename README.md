@@ -1,21 +1,20 @@
 # LightBridge AI — N-ATLaS text service
 
-For **Render Free (512 MB)** use the HTTP-only `Dockerfile.remote`, `requirements-remote.txt` and `render-free.env.example`. This mode preserves the FastAPI chat contract and four languages without importing, downloading or loading any local model. **Blocked: the inspected Space requires its owner's API key; live unauthenticated chat returned 401. Real remote inference has not passed and nothing has been deployed.** See [remote setup and verification](REMOTE.md). `HF_TOKEN` is not the Space API key.
+For the current GPU deployment, use [RUNPOD.md](RUNPOD.md) and `Dockerfile.runpod`. It reuses the existing official `NCAIR1/N-ATLaS` Transformers loader with 4-bit NF4 bitsandbytes quantization. No model conversion or alternate inference toolkit is involved.
 
-The optional **paid CPU** Render path prepares and hosts `NCAIR1/N-ATLaS` entirely on Render. A finite preparation job downloads the official model, converts it to Q4_K_M GGUF, saves it on the service's persistent disk and runs genuine inference checks. Serving mode reuses that artifact with CPU-only llama.cpp. No Kaggle, tunnel or substitute language model is used by this path.
+`Dockerfile.speech` is a separate CPU-only FastAPI service for the four official NCAIR speech models. Deploy it separately from chat so the Whisper and N-ATLaS weights do not share the 8 GB memory limit. The routes and Bearer-authenticated API contracts remain unchanged.
 
-**Status: implementation prepared; CPU conversion, Docker build, and real generation are not yet verified. No Render deployment has been made.** See [the Render CPU guide](../docs/render-cpu.md) for evidence, conversion, resource estimates, secrets, smoke tests, cutover, rollback, and current blockers.
+**Status:** no RunPod Pod is connected to this workspace. A genuine live inference and book-grounded smoke test is still required before sharing the service URL. The historical Kaggle validation is documented in `../docs/kaggle-chat.md`.
 
 | File | Purpose |
 | --- | --- |
-| `Dockerfile.remote` / `requirements-remote.txt` | Free-tier HTTP adapter; no local model dependencies |
-| `app/remote.py` / `render-free.env.example` | Verified Space API contract, separate owner-issued API key |
-| `scripts/smoke_remote.py` | Real four-language remote inference and history check; fails when blocked |
-| `Dockerfile` / `requirements-convert.txt` | Render preparation and serving; CPU torch only for conversion, no CUDA/bitsandbytes |
-| `app/preparation.py` | Supervised first-run preparation and genuine inference verification |
-| `Dockerfile.chat`, `Dockerfile.convert` | Historical standalone configurations; not used by the Render workflow |
-| `render.env.example` | CPU settings template; populate secrets outside Git |
-| `scripts/smoke_cpu.py` | Genuine local or remote inference in all four languages |
+| `Dockerfile` | Render CPU inference image; no model conversion or GPU dependencies |
+| `Dockerfile.runpod` | RunPod GPU image for direct official Transformers inference |
+| `RUNPOD.md` | Pod, volume, environment, API, and live verification settings |
+| `Dockerfile.convert` / `scripts/convert_model.py` | Separate CPU artifact-conversion workflow; requires 32 GiB RAM and 40 GiB free disk |
+| `Dockerfile.speech` | Separate CPU-only service for official Yoruba, Nigerian English, Hausa, and Igbo ASR |
+| `render.env.example` | Render environment template; set secrets separately on each service |
+| `scripts/smoke_cpu.py` | Genuine four-language local/service inference smoke test; not a unit test |
 
 ## Endpoints
 
@@ -24,9 +23,7 @@ The optional **paid CPU** Render path prepares and hosts `NCAIR1/N-ATLaS` entire
 - `GET /health`: speech infrastructure health in the default Transformers configuration; chat readiness in GGUF CPU mode.
 - `POST /transcribe`: restored authenticated audio transcription, described below.
 
-Both Render modes expose chat readiness at `/health` and process liveness at `/live`. In remote mode, `/transcribe` remains authenticated but returns 503 `remote_speech_unavailable`; the Space reports no loaded ASR models and speech inference has not been verified. Remote chat readiness stays 503 until an actual completion succeeds. There is no local speech/model fallback on the free instance.
-
-For the paid CPU factory, `/transcribe` remains unavailable. Start with `NATLAS_SETUP_MODE=prepare` and Render health path `/live`, then switch to `serve` and `/health` only after verified preparation. A green preparation deploy is not a claim of model readiness. See [exact CPU instructions](../docs/render-cpu.md).
+The chat container exposes `/health/chat` as readiness; it returns 200 only after the local CPU artifact has passed provenance/hash validation and llama.cpp has loaded it. Speech is deployed separately and exposes `/health`. Both services retain the authenticated chat/transcribe routes and one worker per instance.
 
 Languages are `en`, `yo`, `ha`, `ig`. Requests must alternate user/assistant turns, starting and ending with user. Limits: 21 messages, 8,000 characters per message, 24,000 total characters and 128 KiB JSON. The server owns the system prompt and generation settings. Auth and body limits apply before parsing. Requests are serialized, with safe errors and no prompt/token logging.
 
@@ -43,13 +40,11 @@ python -m venv .venv
 
 The local launcher explicitly disables model loading. A disabled `/chat` returns 503, never a fake reply. Tests inject test-only engines. Speech decoding requires NumPy and FFmpeg; development tests use the bundled FFmpeg dependency.
 
-## GPU deployment
+## Chat API limits and secrets
 
-See [the GPU deployment guide](../docs/lightbridge-chat.md). `Dockerfile.chat` installs `requirements-chat.txt`, which includes the pinned GPU model stack. Set `NATLAS_BACKEND=transformers` for this fallback. FFmpeg and multipart support are restored for speech. Enable `NATLAS_ENABLED`, use one Uvicorn worker without reload, and wait for readiness. Model loading occurs once in lifespan, never in `/chat`.
+The tokenizer's original chat template is preserved by the GGUF CPU loader. Configure `AI_CHAT_API_FORMAT=native` on Express. Keep service tokens and Hugging Face tokens in the host's secret manager, never in browser variables or Docker layers. `REQUEST_TIMEOUT_SECONDS` bounds HTTP request reads; `NATLAS_TIMEOUT_SECONDS` bounds generation.
 
-The model uses 4-bit NF4/double quantization, float16 compute and `device_map="auto"`. CPU/disk offload is rejected. The tokenizer's chat template and generation implementation in `app/chat.py` are preserved. Configure `AI_CHAT_API_FORMAT=native` on Express for this API; Kaggle uses the distinct `message`/`response` contract described in [kaggle-chat.md](../docs/kaggle-chat.md).
-
-Secrets belong in the GPU host environment/secret manager, never browser variables or Docker layers. Copy `.env.example` only when no `.env` exists. HTTP request-read timeout is `REQUEST_TIMEOUT_SECONDS`; generation timeout is `NATLAS_TIMEOUT_SECONDS`. A timed-out worker retains its busy slot until decoding finishes. A stuck CUDA kernel requires restarting the service. No deployment or local model download is performed by cleanup/testing.
+`Dockerfile.chat` and its GPU requirements are retained for historical compatibility only. They are not used by the Render Pro Plus CPU deployment described in [RENDER.md](RENDER.md).
 
 # LightBridge AI private NCAIR speech service
 
@@ -62,8 +57,8 @@ The optional local speech mode uses FastAPI + Hugging Face Transformers + PyTorc
 | --- | --- | --- |
 | `yo` | [NCAIR1/Yoruba-ASR](https://huggingface.co/NCAIR1/Yoruba-ASR) | Enabled |
 | `en-NG` | [NCAIR1/NigerianAccentedEnglish](https://huggingface.co/NCAIR1/NigerianAccentedEnglish) | Enabled |
-| `ha` | [NCAIR1/Hausa-ASR](https://huggingface.co/NCAIR1/Hausa-ASR) | Disabled |
-| `ig` | [NCAIR1/Igbo-ASR](https://huggingface.co/NCAIR1/Igbo-ASR) | Disabled |
+| `ha` | [NCAIR1/Hausa-ASR](https://huggingface.co/NCAIR1/Hausa-ASR) | Enabled |
+| `ig` | [NCAIR1/Igbo-ASR](https://huggingface.co/NCAIR1/Igbo-ASR) | Enabled |
 
 On 2026-10-09, public Hugging Face metadata confirmed all four repositories exist, are gated, and supply Whisper checkpoint/tokenizer files. Exact commits are pinned in `app/registry.py`. Public metadata access does **not** demonstrate account authorization or successful inference.
 
@@ -114,7 +109,7 @@ The first transcription loads that language's model; subsequent requests reuse i
 `POST /transcribe` requires `Authorization: Bearer <AI_SERVICE_TOKEN>` and multipart fields:
 
 - `audio`: exactly one WebM, WAV or OGG file.
-- `language`: exactly `yo` or `en-NG` by default.
+- `language`: exactly `yo`, `en-NG`, `ha`, or `ig`.
 
 Accepted MIME types are `audio/webm` (including `;codecs=opus`), `audio/ogg`, `application/ogg`, `audio/wav`, `audio/wave`, `audio/x-wav`. MP3, MP4/AAC and mismatched container/MIME pairs are rejected. FFmpeg validates/decodes content, rather than trusting filenames or duration metadata. Default limits are 10 MiB per file and 60 seconds of decoded audio. Audio becomes mono 16 kHz float32; recordings over 30 seconds use overlapping Whisper pipeline chunks. The checkpoint's language configuration is preserved and the generation task is transcription.
 
@@ -133,7 +128,7 @@ Errors use `{"error":{"code":"...","message":"..."},"request_id":"..."}`. Status
 
 Authentication and a streamed request-byte cap run before multipart parsing. Only one upload/decode/inference job is admitted per API instance; excess requests receive 429 rather than accumulate in memory. The API event loop remains available for health checks while a persistent spawned process performs inference. Separate cold-load and inference deadlines kill/reset that process when exceeded, releasing its model allocations; a subsequent request reloads from disk. Initialization failures have a retry cooldown to avoid repeatedly contacting Hugging Face. Multipart temporary files are closed after use; bounded PCM remains in memory only for the job. FFmpeg gets pipe-only protocols and explicit container demuxers.
 
-For later rollout, `ENABLED_LANGUAGES=yo,en-NG,ha,ig` enables registered Hausa/Igbo checkpoints without a loader rewrite. Validate access and actual language quality first; the initial browser/proxy contract should continue exposing only the two tested language choices.
+Set `ENABLED_LANGUAGES=yo,en-NG,ha,ig` on the speech service. Each language uses its pinned official NCAIR checkpoint. Confirm gated repository access and review actual transcripts before opening the matching browser choices to production users.
 
 ## Automated and manual tests
 

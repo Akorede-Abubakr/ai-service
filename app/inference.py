@@ -1,5 +1,6 @@
 """One persistent, killable model process per API instance; no inference threads."""
 import asyncio
+import gc
 import logging
 import multiprocessing as mp
 import os
@@ -47,6 +48,8 @@ class ModelCache:
         self.loader = loader
         self.models = {}
         self.failures = {}
+        self.language = None
+        self.released_language = None
 
     def get(self, language):
         if language in self.failures:
@@ -55,12 +58,17 @@ class ModelCache:
                 raise error
             del self.failures[language]
         if language not in self.models:
+            if self.language is not None:
+                self.models.clear()
+                gc.collect()
+                self.released_language = self.language
             try:
                 self.models[language] = self.loader(MODELS[language], self.settings)
             except Exception as exc:
                 error = model_error(exc)
                 self.failures[language] = (time.monotonic() + self.settings.model_retry_seconds, error)
                 raise error from None
+            self.language = language
         return self.models[language]
 
 
@@ -76,7 +84,8 @@ def worker_main(connection, settings):
             language, samples = connection.recv()
             try:
                 asr = cache.get(language)
-                connection.send({"loaded": language})
+                connection.send({"loaded": language, "released": cache.released_language})
+                cache.released_language = None
                 import torch
 
                 with torch.inference_mode():
@@ -138,6 +147,8 @@ class InferenceEngine:
                 result = await self._receive()
             if "error" in result:
                 raise ServiceError(*result["error"])
+            if result.get("released"):
+                self.loaded.discard(result["released"])
             self.loaded.add(language)
             async with asyncio.timeout(self.settings.inference_timeout_seconds):
                 result = await self._receive()

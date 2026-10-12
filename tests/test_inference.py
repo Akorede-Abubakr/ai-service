@@ -20,21 +20,26 @@ def exit_worker(connection, settings):
 
 
 def echo_worker(connection, settings):
+    loaded = None
     while True:
         try:
             language, samples = connection.recv()
-            connection.send({"loaded": language})
+            connection.send({"loaded": language, "released": loaded if loaded != language else None})
+            loaded = language
             connection.send({"transcript": "test transcription"})
         except EOFError:
             break
 
 
-def test_model_cache_reuses_each_language(settings):
+def test_model_cache_reuses_only_the_current_language(settings):
     calls = []
     cache = ModelCache(settings, loader=lambda spec, _: calls.append(spec.model_id) or object())
     assert cache.get("yo") is cache.get("yo")
     assert cache.get("en-NG") is cache.get("en-NG")
-    assert len(calls) == 2
+    assert cache.get("ig") is cache.get("ig")
+    assert calls == ["NCAIR1/Yoruba-ASR", "NCAIR1/NigerianAccentedEnglish", "NCAIR1/Igbo-ASR"]
+    assert len(cache.models) == 1 and cache.language == "ig"
+    assert cache.released_language == "en-NG"
 
 
 @pytest.mark.parametrize("status,code", [(401, "model_access_denied"), (403, "model_access_denied"),
@@ -88,6 +93,6 @@ async def test_persistent_process(settings):
         pid = engine.process.pid
         await engine.transcribe("en-NG", np.zeros(1600))
         assert engine.process.pid == pid
-        assert engine.loaded == {"yo", "en-NG"}
+        assert engine.loaded == {"en-NG"}
     finally:
         await engine.close()

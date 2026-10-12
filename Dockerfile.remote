@@ -5,9 +5,9 @@ COPY requirements-remote.txt ./
 RUN pip install --no-cache-dir -r requirements-remote.txt
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     NATLAS_BACKEND=remote NATLAS_ENABLED=true NATLAS_MAX_NEW_TOKENS=128 \
-    NATLAS_TIMEOUT_SECONDS=120 HF_HUB_OFFLINE=1 HF_LOCAL_FILES_ONLY=true PORT=10000
+    NATLAS_TIMEOUT_SECONDS=130 HF_HUB_OFFLINE=1 HF_LOCAL_FILES_ONLY=true PORT=10000
 COPY app ./app
-COPY scripts/serve_remote.py scripts/smoke_remote.py ./scripts/
+COPY scripts/serve_remote.py scripts/smoke_remote.py scripts/probe_official_inference.py ./scripts/
 USER 10001:10001
 EXPOSE 10000
 CMD ["python", "scripts/serve_remote.py"]

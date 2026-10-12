@@ -37,7 +37,7 @@ def reuse_prepared(output):
     if not (output / COMMIT_FILE).exists():
         return False
     acquire_artifact(SimpleNamespace(natlas_artifact_dir=output, natlas_managed_artifact=True,
-                                    natlas_manifest_sha256=""))
+                                    natlas_manifest_sha256="", natlas_require_verified_artifact=False))
     return True
 
 

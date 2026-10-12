@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/workspace/huggingface \
+    PORT=10000
+
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements*.txt ./
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu126
+RUN pip install --no-cache-dir torch==2.9.1 --index-url ${TORCH_INDEX_URL} \
+    && pip install --no-cache-dir -r requirements-chat.txt
+
+COPY app ./app
+EXPOSE 10000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20m \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:10000/health/chat', timeout=3)"
+
+CMD ["sh", "-c", "exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port ${PORT:-10000} --workers 1 --no-access-log"]

@@ -58,6 +58,8 @@ def acquire_artifact(settings):
     else:
         manifest = validate_manifest(obtain(MANIFEST_FILE), settings.natlas_manifest_sha256)
         model_path = obtain(MODEL_FILE)
+    if getattr(settings, "natlas_require_verified_artifact", False) and manifest.get("generation_verified") is not True:
+        raise ValueError("Artifact has not passed genuine N-ATLaS generation smoke testing")
     if model_path.stat().st_size != manifest["size_bytes"] or sha256(model_path) != manifest["sha256"]:
         raise ValueError("GGUF checksum mismatch; replace the invalid artifact")
     with model_path.open("rb") as handle:

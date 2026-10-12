@@ -54,6 +54,18 @@ def test_artifact_rejects_untrusted_manifest_and_never_fetches_offline(settings)
         acquire_artifact(settings)
 
 
+def test_render_requires_real_generation_verified_manifest(settings):
+    _, manifest, data = artifact(settings)
+    settings.natlas_require_verified_artifact = True
+    with pytest.raises(ValueError, match="genuine N-ATLaS generation smoke"):
+        acquire_artifact(settings)
+    data = __import__("json").loads(manifest.read_text())
+    data["generation_verified"] = True
+    manifest.write_text(__import__("json").dumps(data))
+    settings.natlas_manifest_sha256 = __import__("hashlib").sha256(manifest.read_bytes()).hexdigest()
+    assert acquire_artifact(settings).is_file()
+
+
 def test_cpu_generation_preserves_language_budget_and_cancellation(settings, monkeypatch):
     import sys
     from types import SimpleNamespace

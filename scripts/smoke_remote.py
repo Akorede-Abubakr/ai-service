@@ -1,8 +1,8 @@
 """Opt-in real remote inference through FastAPI. No fixtures or mock fallback.
 
-Default: exercise the local app in-process with actual HTTPS to the Space.
---url: exercise an already running instance. --probe: public access diagnostic
-only, always exits nonzero because it cannot establish authenticated inference.
+Default: exercise the local app in-process with actual HTTPS to your CPU host.
+--url: exercise an already running gateway. --probe: official HF availability
+and an actual generation request using HF_TOKEN, without loading model weights.
 """
 import argparse
 import asyncio
@@ -18,7 +18,6 @@ import httpx
 
 from app.config import Settings
 from app.main import create_app
-from app.remote import SPACE_URL
 
 PROMPTS = {
     "en": "In one short sentence, explain why reading is useful.",
@@ -83,25 +82,15 @@ async def check(client, settings):
     health = await client.get("/health/chat")
     if health.status_code != 200 or health.json().get("inference_verified") is not True:
         raise ValueError("Remote readiness did not reflect successful inference")
-    emit(inference_passed=True, model=settings.natlas_model_id, provider=SPACE_URL,
+    emit(inference_passed=True, model=settings.natlas_model_id, runtime="self-hosted-cpu",
          languages=list(PROMPTS), requests=5,
          note="Actual responses above require human language-quality review.")
 
 
 async def run(args):
     if args.probe:
-        async with httpx.AsyncClient(base_url=SPACE_URL, timeout=30, follow_redirects=False, trust_env=False) as client:
-            health = await client.get("/healthz")
-            emit(probe="health", status=health.status_code,
-                 model=health.json().get("model"), asr_models_loaded=health.json().get("asr_models_loaded"))
-            models = await client.get("/v1/models")
-            emit(probe="unauthenticated_models", status=models.status_code)
-            chat = await client.post("/v1/chat/completions", json={
-                "model": "NCAIR1/N-ATLaS", "messages": [{"role": "user", "content": "Say hello in English."}],
-                "max_tokens": 16, "stream": False,
-            })
-            emit(probe="unauthenticated_chat", status=chat.status_code)
-        raise ValueError("Public access probe is not authenticated inference verification")
+        from probe_official_inference import run as probe
+        sys.exit(await asyncio.to_thread(probe))
     settings = Settings(natlas_backend="remote", natlas_enabled=True, natlas_max_new_tokens=128)
     if args.url:
         async with httpx.AsyncClient(base_url=service_url(args.url), timeout=135,
@@ -111,7 +100,7 @@ async def run(args):
         app = create_app(settings=settings)
         async with app.router.lifespan_context(app):
             # Only the local HTTP transport is in-process. The engine contacts the
-            # actual Space over HTTPS; no test engine/transport is injected there.
+            # actual CPU host over HTTPS; no test engine/transport is injected there.
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                          base_url="http://local-app") as client:
                 await check(client, settings)
@@ -121,11 +110,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--url", help="Existing service URL; this script does not deploy")
-    group.add_argument("--probe", action="store_true", help="Diagnose public Space access, never report inference success")
+    group.add_argument("--probe", action="store_true", help="Probe official Hugging Face availability and real generation")
     try:
         asyncio.run(run(parser.parse_args()))
     except Exception as exc:
         # No exception messages: third-party failures may contain secrets/URLs.
         emit(inference_passed=False, error_type=type(exc).__name__,
-             action="Check NATLAS_REMOTE_API_KEY and the Space's availability. No deployment is authorized by this result.")
+             action="Configure and verify your own CPU inference host. No deployment is authorized by this result.")
         sys.exit(1)
