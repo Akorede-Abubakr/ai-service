@@ -1,0 +1,7 @@
+-r requirements-api.txt
+pytest==9.0.2
+pytest-asyncio==1.3.0
+httpx==0.28.1
+# Bundled FFmpeg for codec tests only; production uses the system binary.
+imageio-ffmpeg==0.6.0
+Jinja2==3.1.6

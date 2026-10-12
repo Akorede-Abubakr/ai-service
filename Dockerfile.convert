@@ -1,0 +1,17 @@
+# Offline preparation workstation only; do NOT select this file on Render.
+FROM python:3.12-slim-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential cmake \
+    && rm -rf /var/lib/apt/lists/*
+ENV CMAKE_ARGS="-DGGML_CUDA=OFF -DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DLLAMA_CURL=OFF" \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 HF_HUB_DISABLE_TELEMETRY=1 HF_HUB_DISABLE_PROGRESS_BARS=1
+RUN git clone https://github.com/ggml-org/llama.cpp.git /opt/llama.cpp \
+    && cd /opt/llama.cpp && git checkout 4227c9be4268ac844921b90f31595f81236bd317 \
+    && cmake -B build -DGGML_CUDA=OFF -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF \
+    && cmake --build build --config Release --target llama-quantize -j 2
+WORKDIR /app
+COPY requirements-api.txt requirements-cpu.txt requirements-convert.txt ./
+RUN pip install --no-cache-dir torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements-convert.txt
+COPY app ./app
+COPY scripts/convert_model.py ./scripts/
+ENTRYPOINT ["python", "scripts/convert_model.py"]

@@ -1,0 +1,15 @@
+.venv
+.env
+.env.*
+.cache
+__pycache__
+.pytest_cache
+tests
+*.pyc
+**/*.gguf*
+**/*.safetensors*
+**/*.bin
+models
+artifacts
+conversion-work
+.git

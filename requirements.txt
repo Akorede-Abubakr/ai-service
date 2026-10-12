@@ -1,0 +1,4 @@
+-r requirements-api.txt
+transformers==4.57.6
+torch==2.9.1
+hf-xet==1.7.0
