@@ -1,11 +1,16 @@
 # LightBridge AI — N-ATLaS text service
 
-The Render path prepares and hosts `NCAIR1/N-ATLaS` entirely on Render. A finite preparation job downloads the official model, converts it to Q4_K_M GGUF, saves it on the service's persistent disk and runs genuine inference checks. Serving mode reuses that artifact with CPU-only llama.cpp. No Kaggle, tunnel or substitute language model is used by this path.
+For **Render Free (512 MB)** use the HTTP-only `Dockerfile.remote`, `requirements-remote.txt` and `render-free.env.example`. This mode preserves the FastAPI chat contract and four languages without importing, downloading or loading any local model. **Blocked: the inspected Space requires its owner's API key; live unauthenticated chat returned 401. Real remote inference has not passed and nothing has been deployed.** See [remote setup and verification](REMOTE.md). `HF_TOKEN` is not the Space API key.
+
+The optional **paid CPU** Render path prepares and hosts `NCAIR1/N-ATLaS` entirely on Render. A finite preparation job downloads the official model, converts it to Q4_K_M GGUF, saves it on the service's persistent disk and runs genuine inference checks. Serving mode reuses that artifact with CPU-only llama.cpp. No Kaggle, tunnel or substitute language model is used by this path.
 
 **Status: implementation prepared; CPU conversion, Docker build, and real generation are not yet verified. No Render deployment has been made.** See [the Render CPU guide](../docs/render-cpu.md) for evidence, conversion, resource estimates, secrets, smoke tests, cutover, rollback, and current blockers.
 
 | File | Purpose |
 | --- | --- |
+| `Dockerfile.remote` / `requirements-remote.txt` | Free-tier HTTP adapter; no local model dependencies |
+| `app/remote.py` / `render-free.env.example` | Verified Space API contract, separate owner-issued API key |
+| `scripts/smoke_remote.py` | Real four-language remote inference and history check; fails when blocked |
 | `Dockerfile` / `requirements-convert.txt` | Render preparation and serving; CPU torch only for conversion, no CUDA/bitsandbytes |
 | `app/preparation.py` | Supervised first-run preparation and genuine inference verification |
 | `Dockerfile.chat`, `Dockerfile.convert` | Historical standalone configurations; not used by the Render workflow |
@@ -19,7 +24,9 @@ The Render path prepares and hosts `NCAIR1/N-ATLaS` entirely on Render. A finite
 - `GET /health`: speech infrastructure health in the default Transformers configuration; chat readiness in GGUF CPU mode.
 - `POST /transcribe`: restored authenticated audio transcription, described below.
 
-The Render factory exposes chat readiness at `/health` and process liveness at `/live`; `/transcribe` is unavailable on that chat instance. Start with `NATLAS_SETUP_MODE=prepare` and Render health path `/live`, then switch to `serve` and `/health` only after verified preparation. A green preparation deploy is not a claim of model readiness. See [exact Render instructions](../docs/render-cpu.md).
+Both Render modes expose chat readiness at `/health` and process liveness at `/live`. In remote mode, `/transcribe` remains authenticated but returns 503 `remote_speech_unavailable`; the Space reports no loaded ASR models and speech inference has not been verified. Remote chat readiness stays 503 until an actual completion succeeds. There is no local speech/model fallback on the free instance.
+
+For the paid CPU factory, `/transcribe` remains unavailable. Start with `NATLAS_SETUP_MODE=prepare` and Render health path `/live`, then switch to `serve` and `/health` only after verified preparation. A green preparation deploy is not a claim of model readiness. See [exact CPU instructions](../docs/render-cpu.md).
 
 Languages are `en`, `yo`, `ha`, `ig`. Requests must alternate user/assistant turns, starting and ending with user. Limits: 21 messages, 8,000 characters per message, 24,000 total characters and 128 KiB JSON. The server owns the system prompt and generation settings. Auth and body limits apply before parsing. Requests are serialized, with safe errors and no prompt/token logging.
 
@@ -47,7 +54,7 @@ Secrets belong in the GPU host environment/secret manager, never browser variabl
 # LightBridge AI private NCAIR speech service
 
 
-FastAPI + Hugging Face Transformers + PyTorch + FFmpeg. No remote inference provider, Modal or Google Cloud dependency. This service has no browser credentials or MongoDB coupling.
+The optional local speech mode uses FastAPI + Hugging Face Transformers + PyTorch + FFmpeg. It has no remote inference dependency. This service has no browser credentials or MongoDB coupling. The following speech setup is for separately resourced local inference, not the free-tier remote profile.
 
 ## Official model access
 

@@ -12,7 +12,6 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
-from .audio import decode_audio
 from .config import Settings
 from .chat import ChatEngine, ChatRequest
 from .errors import ServiceError
@@ -20,6 +19,12 @@ from .inference import InferenceEngine
 from .registry import MODELS
 
 logger = logging.getLogger("lightbridge.asr")
+
+
+async def decode_audio(*args, **kwargs):
+    # Remote chat does not need NumPy, FFmpeg or any model libraries.
+    from .audio import decode_audio as decode
+    return await decode(*args, **kwargs)
 
 
 def error_response(error, request_id):
@@ -113,8 +118,14 @@ class RequestGuard:
 
 def create_app(settings=None, engine=None, decoder=decode_audio, chat_engine=None, render_only=False):
     settings = settings or Settings()
-    engine = None if render_only else (engine or InferenceEngine(settings))
-    chat_engine = chat_engine or ChatEngine(settings)
+    remote_mode = settings.natlas_backend == "remote"
+    engine = None if render_only or remote_mode else (engine or InferenceEngine(settings))
+    if chat_engine is None:
+        if remote_mode:
+            from .remote import RemoteChatEngine
+            chat_engine = RemoteChatEngine(settings)
+        else:
+            chat_engine = ChatEngine(settings)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -140,11 +151,11 @@ def create_app(settings=None, engine=None, decoder=decode_audio, chat_engine=Non
                   docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(RequestGuard, settings=settings)
 
-    if render_only:
+    if render_only or remote_mode:
         @app.get("/live")
         async def live():
-            # Preparation-job supervisor is alive; this is NOT model readiness.
-            return JSONResponse({"status": "alive", "mode": settings.natlas_setup_mode,
+            # Process liveness only; this is NOT inference readiness.
+            return JSONResponse({"status": "alive", "mode": "remote" if remote_mode else settings.natlas_setup_mode,
                                  "model_state": chat_engine.state}, headers={"Cache-Control": "no-store"})
 
     @app.exception_handler(ServiceError)
@@ -164,7 +175,7 @@ def create_app(settings=None, engine=None, decoder=decode_audio, chat_engine=Non
 
     @app.get("/health")
     async def health():
-        if settings.natlas_backend == "gguf":
+        if settings.natlas_backend in ("gguf", "remote"):
             return await chat_health()
         available = bool(shutil.which(settings.ffmpeg_binary))
         healthy = available and engine.last_error is None
@@ -179,6 +190,9 @@ def create_app(settings=None, engine=None, decoder=decode_audio, chat_engine=Non
 
     @app.post("/transcribe")
     async def transcribe(request: Request):
+        if remote_mode:
+            raise ServiceError(503, "remote_speech_unavailable",
+                               "Remote speech inference is not verified. Local speech models are disabled in remote mode.")
         if render_only:
             raise ServiceError(404, "not_found", "Endpoint not available on the chat service.")
         started = time.monotonic()
@@ -206,6 +220,10 @@ def create_app(settings=None, engine=None, decoder=decode_audio, chat_engine=Non
         health = {"status": chat_engine.state, "model": settings.natlas_model_id}
         if settings.natlas_backend == "gguf":
             health.update(runtime="gguf-cpu", artifact_sha256=settings.natlas_manifest_sha256)
+        elif remote_mode:
+            health.update(runtime="remote", last_error=chat_engine.last_error,
+                          inference_verified=chat_engine.state == "ready",
+                          speech_status="remote_speech_unavailable")
         return JSONResponse(health,
                             status_code=200 if chat_engine.state == "ready" else 503,
                             headers={"Cache-Control": "no-store"})
@@ -223,7 +241,14 @@ def create_app(settings=None, engine=None, decoder=decode_audio, chat_engine=Non
 
 
 def create_render_app():
+    if Settings().natlas_backend == "remote":
+        return create_remote_app()
     from .preparation import RenderChatEngine
     settings = Settings(natlas_backend="gguf", natlas_enabled=True,
                         natlas_managed_artifact=True, hf_local_files_only=True)
     return create_app(settings=settings, chat_engine=RenderChatEngine(settings), render_only=True)
+
+
+def create_remote_app():
+    """Free-tier factory: never create a local model or preparation worker."""
+    return create_app(settings=Settings(natlas_backend="remote", natlas_enabled=True))

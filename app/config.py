@@ -21,8 +21,10 @@ class Settings(BaseSettings):
     natlas_enabled: bool = False
     natlas_model_id: Literal["NCAIR1/N-ATLaS"] = "NCAIR1/N-ATLaS"
     natlas_revision: str = "main"
-    # GPU remains the default for existing installations. Render selects gguf.
-    natlas_backend: Literal["transformers", "gguf"] = "transformers"
+    # Existing installations default to GPU; Render has separate remote/CPU profiles.
+    natlas_backend: Literal["transformers", "gguf", "remote"] = "transformers"
+    # This is the Space owner's NATLAS_API_KEY, NOT HF_TOKEN or AI_SERVICE_TOKEN.
+    natlas_remote_api_key: SecretStr | None = None
     natlas_artifact_dir: Path = Path("/data/natlas")
     natlas_managed_artifact: bool = False
     natlas_setup_mode: Literal["prepare", "serve"] = "serve"
