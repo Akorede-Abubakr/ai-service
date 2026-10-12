@@ -1,6 +1,6 @@
 # RunPod GPU Pod deployment
 
-This is a hosting migration of the existing Transformers chat implementation.
+This is the RunPod GPU deployment of the existing Transformers chat implementation.
 It loads the gated `NCAIR1/N-ATLaS` repository directly with
 `AutoTokenizer`/`AutoModelForCausalLM`, 4-bit bitsandbytes NF4 with double
 quantization, float16 compute, `device_map="auto"`, the tokenizer's chat
@@ -56,6 +56,8 @@ PORT=10000
 HF_HOME=/workspace/huggingface
 HF_TOKEN=<Hugging Face read token with accepted NCAIR1/N-ATLaS access>
 AI_SERVICE_TOKEN=<random secret of at least 32 characters>
+ASR_DEVICE=auto
+ENABLED_LANGUAGES=yo,en-NG,ha,ig
 NATLAS_ENABLED=true
 NATLAS_BACKEND=transformers
 NATLAS_MODEL_ID=NCAIR1/N-ATLaS
@@ -67,8 +69,13 @@ HF_HUB_DISABLE_TELEMETRY=1
 HF_HUB_DISABLE_PROGRESS_BARS=1
 ```
 
-`AI_SERVICE_TOKEN` is the existing FastAPI Bearer credential. `HF_TOKEN` is
-only for gated model download and stays on the Pod. The image starts with:
+`AI_SERVICE_TOKEN` is the existing FastAPI Bearer credential. `HF_TOKEN` stays
+on the Pod and needs accepted read access to `NCAIR1/N-ATLaS` and all four
+official speech repositories: `NCAIR1/Yoruba-ASR`,
+`NCAIR1/NigerianAccentedEnglish`, `NCAIR1/Hausa-ASR`, and `NCAIR1/Igbo-ASR`.
+The authenticated API serves the official speech models at `/transcribe`; they
+load on first use and keep one language model at a time. `ASR_DEVICE=auto`
+uses the Pod GPU when available. The image starts with:
 
 ```sh
 uvicorn app.main:create_app --factory --host 0.0.0.0 --port 10000 --workers 1 --no-access-log
@@ -78,7 +85,10 @@ Wait for `GET /health/chat` to report HTTP 200 and `status: ready`. That means
 weights loaded; it is not an inference test. The backend API stays
 `POST /chat` with `{ "language": "en|yo|ha|ig", "messages": [...] }` and returns
 `reply`, `language`, `model`, and `processing_time_ms` under the existing
-LightBridge response envelope.
+LightBridge response envelope. `POST /transcribe` accepts the existing
+authenticated multipart `audio` and `language` fields (`yo`, `en-NG`, `ha`,
+`ig`) and returns the model-specific transcript. FFmpeg and
+PyTorch/Transformers are already installed by `Dockerfile.runpod`.
 
 ## Backend environment
 
@@ -92,9 +102,11 @@ AI_CHAT_API_FORMAT=native
 AI_CHAT_TIMEOUT_MS=135000
 ```
 
-Keep `AI_ASR_SERVICE_URL` and `AI_ASR_SERVICE_TOKEN` pointed at the current
-NCAIR speech service. Chat changes do not move or rebuild speech, books, RAG,
-conversation history, or frontend code. Never use `VITE_*` for these values.
+Set `AI_ASR_SERVICE_URL` to this same RunPod root URL, and set
+`AI_ASR_SERVICE_TOKEN` to the same Bearer secret, or leave both blank to use
+the existing `AI_SERVICE_URL` and `AI_SERVICE_TOKEN` fallback. The backend's
+transcription timeout remains `AI_SERVICE_TIMEOUT_MS` (default 780000 ms).
+Keep these values server-side; never use `VITE_*` for credentials.
 
 ## Live verification
 
